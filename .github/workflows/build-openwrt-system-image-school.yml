@@ -1,9 +1,9 @@
-#=====================================================================================
+#============================================================================================
 # https://github.com/ophub/amlogic-s9xxx-openwrt
-# Description: Build OpenWrt using releases files
-#=====================================================================================
+# Description: Build OpenWrt system image
+#============================================================================================
 
-name: Build OpenWrt using releases files
+name: Build OpenWrt system image School Customized
 
 on:
   repository_dispatch:
@@ -12,16 +12,16 @@ on:
       source_branch:
         description: "Select the source branch"
         required: false
-        default: "immortalwrt"
+        default: "immortalwrt-master"
         type: choice
         options:
-          - official
-          - lede
-          - immortalwrt
+          - openwrt-main
+          - lede-master
+          - immortalwrt-master
       openwrt_board:
         description: "Select device board"
         required: false
-        default: "dg3399"
+        default: "sv-33a6x"
         type: choice
         options:
           - dg3399
@@ -84,6 +84,10 @@ on:
           - NateF
 
 env:
+  FEEDS_CONF: config/${{ inputs.source_branch }}/feeds.conf.default
+  CONFIG_FILE: config/${{ inputs.source_branch }}/config
+  DIY_P1_SH: config/${{ inputs.source_branch }}/diy-part1.sh
+  DIY_P2_SH: config/${{ inputs.source_branch }}/diy-part2_school.sh
   TZ: Etc/UTC
 
 jobs:
@@ -137,13 +141,13 @@ jobs:
           sudo chown -R runner.runner /builder
           df -Th
 
-      - name: Download OpenWrt [ ${{ inputs.source_branch }} ]
-        id: down
+      - name: Clone source code [ ${{ inputs.source_branch }} ]
+        id: codes
         working-directory: /builder
         if: ${{ steps.init.outputs.status }} == 'success' && !cancelled()
         run: |
           # Set up compilation source code
-          if [[ "${{ inputs.source_branch }}" == *"official"* ]]; then
+          if [[ "${{ inputs.source_branch }}" == *"openwrt"* ]]; then
               REPO_URL="https://github.com/openwrt/openwrt"
               REPO_BRANCH="main"
               TAGS_NAME="official"
@@ -160,40 +164,89 @@ jobs:
               exit 1
           fi
 
-          armsr_tarfile_path="openwrt/output"
-          [[ -d "${armsr_tarfile_path}" ]] || mkdir -p ${armsr_tarfile_path}
+          # Clone source code
+          git clone -q --single-branch --depth=1 --branch=${REPO_BRANCH} ${REPO_URL} openwrt
           ln -sf /builder/openwrt ${GITHUB_WORKSPACE}/openwrt
           ln -sf /builder/openwrt /home/runner/work/_actions/wf-nb/build-openwrt/main/openwrt
 
-          latest_version=$(curl -s \
-                -H "Accept: application/vnd.github+json" \
-                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-                https://api.github.com/repos/${GITHUB_REPOSITORY}/releases?per_page=100 | \
-                jq -r --arg RTK "OpenWrt_${{ inputs.source_branch }}_" \
-                --arg BOARD "-rootfs.tar.gz" \
-                '[.[] | select(.tag_name | contains($RTK))] |
-                map(.assets[] | select(.browser_download_url | endswith($BOARD))) |
-                sort_by(.updated_at) |
-                reverse |
-                .[0] |
-                {data: .updated_at, url: .browser_download_url}')
-
-          [[ -z "${latest_version}" || "${latest_version}" == "null" ]] && echo "Invalid OpenWrt rootfs download address." && exit 1
-          latest_updated_at="$(echo ${latest_version} | jq -r '.data')"
-          latest_url="$(echo ${latest_version} | jq -r '.url')"
-
-          openwrt_filename="${latest_url##*/}"
-          curl -fsSL "${latest_url}" -o "${armsr_tarfile_path}/${openwrt_filename}"
-          [[ "${?}" -ne "0" ]] && echo "Invalid OpenWrt rootfs download address." && exit 1
-
-          echo "build_tag=OpenWrt_${{ inputs.source_branch }}_${{ inputs.openwrt_storage }}_$(date +"%Y.%m")" >> ${GITHUB_OUTPUT}
+          # Set output information
+          echo "build_tag=OpenWrt_${TAGS_NAME}_${{ inputs.openwrt_storage }}_$(date +"%Y.%m")" >> ${GITHUB_OUTPUT}
+          echo -e "REPO_URL: [ ${REPO_URL} ]\nREPO_BRANCH: [ ${REPO_BRANCH} ]\nTAGS_NAME: [ ${TAGS_NAME} ]"
           df -hT ${PWD}
           echo "REPO_URL=${REPO_URL}" >> ${GITHUB_OUTPUT}
           echo "TAGS_NAME=${TAGS_NAME}" >> ${GITHUB_OUTPUT}
           echo "status=success" >> ${GITHUB_OUTPUT}
 
+      - name: Load custom feeds
+        run: |
+          [[ -f "${FEEDS_CONF}" ]] && cp -f ${FEEDS_CONF} openwrt/feeds.conf.default
+          chmod +x ${DIY_P1_SH}
+          cd openwrt/
+          ${GITHUB_WORKSPACE}/${DIY_P1_SH}
+
+      - name: Update feeds
+        run: cd openwrt/ && ./scripts/feeds update -a
+
+      - name: Install feeds
+        run: cd openwrt/ && ./scripts/feeds install -a
+
+      - name: Load custom configuration
+        run: |
+          [[ -d "files" ]] && mv -f files openwrt/files
+          [[ -e "${CONFIG_FILE}" ]] && cp -f ${CONFIG_FILE} openwrt/.config
+          chmod +x ${DIY_P2_SH}
+          cd openwrt/
+          ${GITHUB_WORKSPACE}/${DIY_P2_SH}
+
+      - name: Download package
+        id: package
+        run: |
+          cd openwrt/
+          make defconfig
+          make download -j8
+          find dl -size -1024c -exec ls -l {} \;
+          find dl -size -1024c -exec rm -f {} \;
+
+      - name: Compile the OpenWrt
+        id: compile
+        run: |
+          cd openwrt/
+          echo -e "$(nproc) thread compile"
+          make -j$(($(nproc) + 1)) V=s || make -j1 || make -j1 V=s
+          echo "status=success" >> ${GITHUB_OUTPUT}
+
+      - name: Clear server space
+        id: clean
+        if: ${{ steps.compile.outputs.status }} == 'success' && !cancelled()
+        run: |
+          # Clean up server space
+          cd openwrt/
+          [[ -d "output" ]] || mkdir output
+          cp -f bin/targets/*/*/*rootfs.tar.gz output/
+          cp -f .config output/config
+          rm -rf $(ls . | grep -v "^output$" | xargs) 2>/dev/null
+
+          # Generate sha256sum file
+          cd output/
+          for file in *; do [[ ! -d "${file}" ]] && sha256sum "${file}" >"${file}.sha"; done
+
+          # Set output information
+          df -hT ${PWD}
+          echo "status=success" >> ${GITHUB_OUTPUT}
+
+      - name: Upload OpenWrt to Release
+        uses: ncipollo/release-action@main
+        if: ${{ steps.clean.outputs.status }} == 'success' && !cancelled()
+        with:
+          tag: ${{ steps.codes.outputs.build_tag }}
+          artifacts: openwrt/output/*
+          allowUpdates: true
+          removeArtifacts: false
+          replacesArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Packaging OpenWrt
-        if: ${{ steps.down.outputs.status }} == 'success' && !cancelled()
+        if: ${{ steps.clean.outputs.status }} == 'success' && !cancelled()
         uses: wf-nb/build-openwrt@main
         with:
           openwrt_path: openwrt/output/*rootfs.tar.gz
@@ -208,7 +261,7 @@ jobs:
         uses: ncipollo/release-action@main
         if: ${{ env.PACKAGED_STATUS }} == 'success' && !cancelled()
         with:
-          tag: ${{ steps.down.outputs.build_tag }}
+          tag: ${{ steps.codes.outputs.build_tag }}
           artifacts: ${{ env.PACKAGED_OUTPUTPATH }}/*
           allowUpdates: true
           removeArtifacts: false
@@ -224,6 +277,6 @@ jobs:
             ### Install to EMMC
             - Login to OpenWrt → System → Amlogic Service → Install OpenWrt
             ### OpenWrt source code
-            - [${{ steps.down.outputs.TAGS_NAME }}](${{ steps.down.outputs.REPO_URL }})
+            - [${{ steps.codes.outputs.TAGS_NAME }}](${{ steps.codes.outputs.REPO_URL }})
             ### OpenWrt Image Verification
             - sha256sum
