@@ -34,21 +34,21 @@ git clone https://github.com/ophub/luci-app-amlogic.git package/luci-app-amlogic
 # Add rkp-ipid
 git clone https://github.com/CHN-beta/rkp-ipid package/rkp-ipid
 # Add UA2F
-git clone https://github.com/Zxilly/UA2F package/UA2F
+# git clone https://github.com/Zxilly/UA2F package/UA2F
 # Add mentohust
-git clone https://github.com/sbwml/luci-app-mentohust package/mentohust
+# git clone https://github.com/sbwml/luci-app-mentohust package/mentohust
 # Add minieap
-git clone https://github.com/ysc3839/luci-proto-minieap package/minieap
+# git clone https://github.com/ysc3839/luci-proto-minieap package/minieap
 # Add clash
-git clone https://github.com/frainzy1477/luci-app-clash package/clash
+# git clone https://github.com/frainzy1477/luci-app-clash package/clash
 # Add dockerman
-git clone https://github.com/lisaac/luci-app-dockerman package/dockerman
+# git clone https://github.com/lisaac/luci-app-dockerman package/dockerman
 # Add OpenClash
-git clone https://github.com/vernesong/OpenClash package/OpenClash
+# git clone https://github.com/vernesong/OpenClash package/OpenClash
 # Add AdGuardHome
-git clone https://github.com/rufengsuixing/luci-app-adguardhome package/adguardhome
+# git clone https://github.com/rufengsuixing/luci-app-adguardhome package/adguardhome
 # Add passwall
-git clone https://github.com/xiaorouji/openwrt-passwall package/passwall
+# git clone https://github.com/xiaorouji/openwrt-passwall package/passwall
 #
 # Apply patch
 # git apply ../config/patches/{0001*,0002*}.patch --directory=feeds/luci
